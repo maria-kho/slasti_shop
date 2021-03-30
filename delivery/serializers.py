@@ -1,3 +1,5 @@
+import re
+
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
@@ -15,8 +17,20 @@ def has_intersection(time_ranges_1, time_ranges_2):
     return False
 
 
+class TimeRangeField(serializers.CharField):
+    def to_internal_value(self, data):
+        super().to_internal_value(data)
+        if not re.fullmatch(r'[0-9]{2}:[0-9]{2}-[0-9]{2}:[0-9]{2}', data):
+            raise ValidationError('Incorrect format. Expected `18:55`.')
+        time1, time2 = [map(int, time.split(':')) for time in data.split('-')]
+        if any([hh > 23 or hh < 0 or mm < 0 or mm > 59 for hh, mm in [time1, time2]]):
+            raise ValidationError('Incorrect value. Hours must be between 0 and 23, minutes between 0 and 59.')
+        return data
+
+
 class CourierSerializer(serializers.ModelSerializer):
     regions = serializers.ListField(child=serializers.IntegerField(min_value=1))
+    working_hours = serializers.ListField(child=TimeRangeField())
 
     def update(self, instance, validated_data):
         super().update(instance, validated_data)
@@ -75,6 +89,7 @@ class CourierShortSerializer(CourierSerializer):
 
 class OrderSerializer(serializers.ModelSerializer):
     weight = serializers.DecimalField(min_value=0.005, max_value=50, max_digits=4, decimal_places=2)
+    delivery_hours = serializers.ListField(child=TimeRangeField())
 
     def to_representation(self, instance):
         return {'id': instance.order_id}

@@ -23,7 +23,7 @@ class TestCourierCreateView(APITestCase):
                     "courier_id": 3,
                     "courier_type": "bike",
                     "regions": [],
-                    "working_hours": ["09:00-18:00"]
+                    "working_hours": ["00:00-23:59"]
                 },
                 {
                     "courier_id": 5,
@@ -140,6 +140,57 @@ class TestCourierCreateView(APITestCase):
                     "courier_type": "bike",
                     "working_hours": ["11:35-14:05", "09:00-11:00"],
                     "regions": 12,
+                }
+            ]
+        }
+        response = self.client.post(self.path, payload, format='json')
+        self.assertEqual(response.status_code, 400)
+
+        qs = Courier.objects.all()
+        self.assertEqual(qs.count(), 0)
+
+    def test_bad_working_hours_format(self):
+        payload = {
+            "data": [
+                {
+                    "courier_id": 1,
+                    "courier_type": "bike",
+                    "working_hours": ["11:35-14:05:", "09:00-11:000"],
+                    "regions": [12],
+                }
+            ]
+        }
+        response = self.client.post(self.path, payload, format='json')
+        self.assertEqual(response.status_code, 400)
+
+        qs = Courier.objects.all()
+        self.assertEqual(qs.count(), 0)
+
+    def test_bad_working_hours_value(self):
+        payload = {
+            "data": [
+                {
+                    "courier_id": 1,
+                    "courier_type": "bike",
+                    "working_hours": ["11:59-14:05", "05:60-11:00"],
+                    "regions": [12],
+                }
+            ]
+        }
+        response = self.client.post(self.path, payload, format='json')
+        self.assertEqual(response.status_code, 400)
+
+        qs = Courier.objects.all()
+        self.assertEqual(qs.count(), 0)
+
+    def test_bad_working_hours_type(self):
+        payload = {
+            "data": [
+                {
+                    "courier_id": 1,
+                    "courier_type": "bike",
+                    "working_hours": "11:35-14:05",
+                    "regions": [12],
                 }
             ]
         }
