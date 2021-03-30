@@ -72,6 +72,8 @@ class CourierShortSerializer(CourierSerializer):
 
 
 class OrderSerializer(serializers.ModelSerializer):
+    weight = serializers.DecimalField(min_value=0.005, max_value=50, max_digits=4, decimal_places=2)
+
     def to_representation(self, instance):
         return {'id': instance.order_id}
 

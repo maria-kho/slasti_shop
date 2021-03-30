@@ -160,7 +160,7 @@ class TestOrderCreateView(APITestCase):
                 },
                 {
                     "order_id": 2,
-                    "weight": 15,
+                    "weight": 50,
                     "region": 1,
                     "delivery_hours": ["09:00-18:00"]
                 },
@@ -185,7 +185,7 @@ class TestOrderCreateView(APITestCase):
         qs = Order.objects.all()
         self.assertEqual(qs.count(), 3)
         order = Order.objects.get(pk=2)
-        self.assertEqual(order.weight, 15)
+        self.assertEqual(order.weight, 50)
         self.assertEqual(order.region, 1)
         self.assertListEqual(order.delivery_hours, ["09:00-18:00"])
 
