@@ -16,6 +16,8 @@ def has_intersection(time_ranges_1, time_ranges_2):
 
 
 class CourierSerializer(serializers.ModelSerializer):
+    regions = serializers.ListField(child=serializers.IntegerField(min_value=1))
+
     def update(self, instance, validated_data):
         super().update(instance, validated_data)
 

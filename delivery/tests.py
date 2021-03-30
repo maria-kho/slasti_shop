@@ -22,7 +22,7 @@ class TestCourierCreateView(APITestCase):
                 {
                     "courier_id": 3,
                     "courier_type": "bike",
-                    "regions": [22],
+                    "regions": [],
                     "working_hours": ["09:00-18:00"]
                 },
                 {
@@ -107,6 +107,40 @@ class TestCourierCreateView(APITestCase):
                     "regions": [22],
                     "working_hours": ["09:00-18:00"]
                 },
+            ]
+        }
+        response = self.client.post(self.path, payload, format='json')
+        self.assertEqual(response.status_code, 400)
+
+        qs = Courier.objects.all()
+        self.assertEqual(qs.count(), 0)
+
+    def test_bad_regions_value(self):
+        payload = {
+            "data": [
+                {
+                    "courier_id": 1,
+                    "courier_type": "bike",
+                    "working_hours": ["11:35-14:05", "09:00-11:00"],
+                    "regions": [0, 12, 22],
+                }
+            ]
+        }
+        response = self.client.post(self.path, payload, format='json')
+        self.assertEqual(response.status_code, 400)
+
+        qs = Courier.objects.all()
+        self.assertEqual(qs.count(), 0)
+
+    def test_bad_regions_type(self):
+        payload = {
+            "data": [
+                {
+                    "courier_id": 1,
+                    "courier_type": "bike",
+                    "working_hours": ["11:35-14:05", "09:00-11:00"],
+                    "regions": 12,
+                }
             ]
         }
         response = self.client.post(self.path, payload, format='json')
