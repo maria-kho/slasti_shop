@@ -17,11 +17,16 @@ class CourierCreateView(generics.CreateAPIView):
     serializer_class = CourierShortSerializer
 
     def create(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data["data"], many=True)
-        serializer.is_valid(raise_exception=True)
+        serializer = self.get_serializer(data=request.data['data'], many=True)
+        if not serializer.is_valid():
+            errors = [
+                {**error, 'id': int(error['id']) if error['id'].isdigit() else error['id']}
+                for error in serializer.errors
+                if error
+            ]
+            return Response({'validation_error': {'couriers': errors}}, status=status.HTTP_400_BAD_REQUEST)
         self.perform_create(serializer)
-        headers = self.get_success_headers(serializer.data)
-        return Response({"couriers": serializer.data}, status=status.HTTP_201_CREATED, headers=headers)
+        return Response({'couriers': serializer.data}, status=status.HTTP_201_CREATED)
 
 
 class CourierUpdateView(generics.UpdateAPIView):
@@ -41,11 +46,16 @@ class OrderCreateView(generics.CreateAPIView):
     serializer_class = OrderSerializer
 
     def create(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data["data"], many=True)
-        serializer.is_valid(raise_exception=True)
+        serializer = self.get_serializer(data=request.data['data'], many=True)
+        if not serializer.is_valid():
+            errors = [
+                {**error, 'id': int(error['id']) if error['id'].isdigit() else error['id']}
+                for error in serializer.errors
+                if error
+            ]
+            return Response({'validation_error': {'orders': errors}}, status=status.HTTP_400_BAD_REQUEST)
         self.perform_create(serializer)
-        headers = self.get_success_headers(serializer.data)
-        return Response({"orders": serializer.data}, status=status.HTTP_201_CREATED, headers=headers)
+        return Response({'orders': serializer.data}, status=status.HTTP_201_CREATED)
 
 
 class AssignView(generics.GenericAPIView):
@@ -73,7 +83,7 @@ class AssignView(generics.GenericAPIView):
         return Response(serializer.data, status=HTTP_200_OK)
 
 
-class CompleteView(generics.GenericAPIView, mixins.UpdateModelMixin):
+class CompleteView(mixins.UpdateModelMixin, generics.GenericAPIView):
     """
     API endpoint to mark an order as completed
     """

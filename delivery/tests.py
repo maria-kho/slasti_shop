@@ -55,14 +55,13 @@ class TestCourierCreateView(APITestCase):
                     "courier_type": "foot",
                     "regions": [1, 12, 22],
                     "working_hours": ["11:35-14:05", "09:00-11:00"],
-                    "bad_field": 1000
                 },
                 {
                     "courier_id": 3,
                     "courier_type": "bike",
                     "regions": [22],
                     "working_hours": ["09:00-18:00"],
-                    "meow": "MEOW"
+                    "bad_field": 1000
                 },
             ]
         }
@@ -89,6 +88,7 @@ class TestCourierCreateView(APITestCase):
         }
         response = self.client.post(self.path, payload, format='json')
         self.assertEqual(response.status_code, 400)
+
         qs = Courier.objects.all()
         self.assertEqual(qs.count(), 0)
 
@@ -114,6 +114,46 @@ class TestCourierCreateView(APITestCase):
 
         qs = Courier.objects.all()
         self.assertEqual(qs.count(), 0)
+
+    def test_bad_courier_id(self):
+        payload = {
+            "data": [
+                {
+                    "courier_id": 0,
+                    "courier_type": "bike",
+                    "working_hours": ["11:35-14:05", "09:00-11:00"],
+                    "regions": [0, 12, 22],
+                }
+            ]
+        }
+        response = self.client.post(self.path, payload, format='json')
+        self.assertEqual(response.status_code, 400)
+
+        qs = Courier.objects.all()
+        self.assertEqual(qs.count(), 0)
+
+    def test_existing_courier(self):
+        Courier.objects.create(courier_id=10, courier_type="foot", regions=[], working_hours=[])
+
+        payload = {
+            "data": [
+                {
+                    "courier_id": 10,
+                    "courier_type": "bike",
+                    "working_hours": ["11:35-14:05", "09:00-11:00"],
+                    "regions": [0, 12, 22],
+                }
+            ]
+        }
+        response = self.client.post(self.path, payload, format='json')
+        self.assertEqual(response.status_code, 400)
+
+        qs = Courier.objects.all()
+        self.assertEqual(qs.count(), 1)
+        courier = Courier.objects.get(pk=10)
+        self.assertEqual(courier.courier_type, FOOT)
+        self.assertListEqual(courier.regions, [])
+        self.assertListEqual(courier.working_hours, [])
 
     def test_bad_regions_value(self):
         payload = {

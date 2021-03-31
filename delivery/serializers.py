@@ -1,7 +1,12 @@
 import re
+from collections import OrderedDict, Mapping
 
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
+from rest_framework.fields import get_error_detail, SkipField, set_value
+from rest_framework.settings import api_settings
+from rest_framework.validators import UniqueValidator
 
 from .models import Courier, Order
 from rest_framework import serializers
@@ -28,7 +33,56 @@ class TimeRangeField(serializers.CharField):
         return data
 
 
+class DeserializerMixin:
+    def to_internal_value(self, data):
+        """
+        Dict of native values <- Dict of primitive datatypes.
+        """
+        if not isinstance(data, Mapping):
+            message = self.error_messages['invalid'].format(
+                datatype=type(data).__name__
+            )
+            raise ValidationError({
+                api_settings.NON_FIELD_ERRORS_KEY: [message]
+            }, code='invalid')
+
+        ret = OrderedDict()
+        errors = OrderedDict()
+        fields = self._writable_fields
+
+        for field in fields:
+            validate_method = getattr(self, 'validate_' + field.field_name, None)
+            primitive_value = field.get_value(data)
+            try:
+                validated_value = field.run_validation(primitive_value)
+                if validate_method is not None:
+                    validated_value = validate_method(validated_value)
+            except ValidationError as exc:
+                errors[field.field_name] = exc.detail
+            except DjangoValidationError as exc:
+                errors[field.field_name] = get_error_detail(exc)
+            except SkipField:
+                pass
+            else:
+                set_value(ret, field.source_attrs, validated_value)
+
+        unknown_keys = set(data.keys()) - set(self.fields.keys())
+        for key in unknown_keys:
+            errors[key] = 'Unexpected field.'
+
+        if errors:
+            errors.update({'id': data.get(self.id_field, 0)})
+            errors.move_to_end('id', last=False)
+            raise ValidationError(errors)
+
+        return ret
+
+
 class CourierSerializer(serializers.ModelSerializer):
+    courier_id = serializers.IntegerField(
+        min_value=1,
+        validators=[UniqueValidator(queryset=Courier.objects.all(), message='Courier with this id already exists.')]
+    )
     regions = serializers.ListField(child=serializers.IntegerField(min_value=1))
     working_hours = serializers.ListField(child=TimeRangeField())
 
@@ -71,23 +125,20 @@ class CourierSerializer(serializers.ModelSerializer):
         fields = ['courier_id', 'courier_type', 'regions', 'working_hours']
 
 
-class CourierShortSerializer(CourierSerializer):
-    def validate(self, data):
-        courier_id = data.get('courier_id')
-        if hasattr(self, 'initial_data'):
-            initial_index = next(
-                (index for (index, d) in enumerate(self.initial_data) if d["courier_id"] == courier_id), None
-            )
-            unknown_keys = set(self.initial_data[initial_index].keys()) - set(self.fields.keys())
-            if unknown_keys:
-                raise ValidationError(detail=f'Got unknown fields: {unknown_keys} for courier_id {courier_id}')
-        return data
+class CourierShortSerializer(DeserializerMixin, CourierSerializer):
+    id_field = 'courier_id'
 
     def to_representation(self, instance):
         return {'id': instance.courier_id}
 
 
-class OrderSerializer(serializers.ModelSerializer):
+class OrderSerializer(DeserializerMixin, serializers.ModelSerializer):
+    id_field = 'order_id'
+
+    order_id = serializers.IntegerField(
+        min_value=1,
+        validators=[UniqueValidator(queryset=Order.objects.all(), message='Order with this id already exists.')]
+    )
     weight = serializers.DecimalField(min_value=0.005, max_value=50, max_digits=4, decimal_places=2)
     delivery_hours = serializers.ListField(child=TimeRangeField())
 
@@ -149,7 +200,7 @@ class AssignSerializer(serializers.ModelSerializer):
 
 
 class CompleteSerializer(serializers.ModelSerializer):
-    courier_id = serializers.IntegerField()
+    courier_id = serializers.IntegerField(min_value=1)
 
     def validate_courier_id(self, value):
         if self.instance.courier is None or self.instance.courier.courier_id != value:
