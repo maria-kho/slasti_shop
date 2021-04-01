@@ -361,8 +361,12 @@ class TestCourierUpdateView(APITestCase):
         self.courier_id = 2
         self.path = reverse('courier', args=(self.courier_id,))
         Courier.objects.create(
-            courier_id=self.courier_id, courier_type=BIKE, regions=[15], working_hours=["09:00-18:00"]
+            courier_id=self.courier_id, courier_type=BIKE, regions=[15, 16, 17], working_hours=["09:00-18:00"]
         )
+        Order.objects.create(order_id=1, weight=3.1, region=15, delivery_hours=["10:00-13:00"], courier_id=2)
+        Order.objects.create(order_id=2, weight=3, region=16, delivery_hours=["10:00-16:00"], courier_id=2)
+        Order.objects.create(order_id=3, weight=2.9, region=17, delivery_hours=["10:00-12:01"], courier_id=2)
+        Order.objects.create(order_id=4, weight=1.01, region=17, delivery_hours=["10:00-12:00"], courier_id=2)
 
     def test_basic(self):
         payload = {
@@ -387,6 +391,112 @@ class TestCourierUpdateView(APITestCase):
         self.assertEqual(courier.courier_type, FOOT)
         self.assertListEqual(courier.regions, [11, 33, 2])
         self.assertListEqual(courier.working_hours, ["10:00-12:00"])
+
+    def test_drop_by_weight(self):
+        orders = Order.objects.filter(courier_id=self.courier_id)
+        self.assertEqual(orders.count(), 4)
+
+        payload = {
+            "courier_type": "foot",
+        }
+        expected_response = {
+            "courier_id": self.courier_id,
+            "courier_type": FOOT,
+            "regions": [15, 16, 17],
+            "working_hours": ["09:00-18:00"]
+        }
+
+        response = self.client.patch(self.path, payload, format='json')
+        self.assertEqual(response.status_code, 200)
+        self.assertDictEqual(response.data, expected_response)
+
+        self.assertEqual(orders.count(), 3)
+
+    def test_drop_by_regions(self):
+        orders = Order.objects.filter(courier_id=self.courier_id)
+        self.assertEqual(orders.count(), 4)
+
+        payload = {
+            "regions": [15, 17],
+        }
+        expected_response = {
+            "courier_id": self.courier_id,
+            "courier_type": BIKE,
+            "regions": [15, 17],
+            "working_hours": ["09:00-18:00"]
+        }
+
+        response = self.client.patch(self.path, payload, format='json')
+        self.assertEqual(response.status_code, 200)
+        self.assertDictEqual(response.data, expected_response)
+
+        self.assertEqual(orders.count(), 3)
+
+    def test_drop_by_hours(self):
+        orders = Order.objects.filter(courier_id=self.courier_id)
+        self.assertEqual(orders.count(), 4)
+
+        payload = {
+            "working_hours": ["12:00-18:00"],
+        }
+        expected_response = {
+            "courier_id": self.courier_id,
+            "courier_type": BIKE,
+            "regions": [15, 16, 17],
+            "working_hours": ["12:00-18:00"]
+        }
+
+        response = self.client.patch(self.path, payload, format='json')
+        self.assertEqual(response.status_code, 200)
+        self.assertDictEqual(response.data, expected_response)
+
+        self.assertEqual(orders.count(), 3)
+
+    def test_drop_multiple(self):
+        orders = Order.objects.filter(courier_id=self.courier_id)
+        self.assertEqual(orders.count(), 4)
+
+        payload = {
+            "courier_type": "foot",
+            "working_hours": ["12:00-18:00"],
+            "regions": [15, 16]
+        }
+        expected_response = {
+            "courier_id": self.courier_id,
+            "courier_type": FOOT,
+            "regions": [15, 16],
+            "working_hours": ["12:00-18:00"]
+        }
+
+        response = self.client.patch(self.path, payload, format='json')
+        self.assertEqual(response.status_code, 200)
+        self.assertDictEqual(response.data, expected_response)
+
+        self.assertEqual(orders.count(), 2)
+
+    def test_drop_multiple_heavy(self):
+        Order.objects.filter(order_id=1).update(weight=8)
+        orders = Order.objects.filter(courier_id=self.courier_id)
+        self.assertEqual(orders.count(), 4)
+
+        payload = {
+            "courier_type": "foot",
+            "working_hours": ["12:00-18:00"],
+            "regions": [15, 16]
+        }
+        expected_response = {
+            "courier_id": self.courier_id,
+            "courier_type": FOOT,
+            "regions": [15, 16],
+            "working_hours": ["12:00-18:00"]
+        }
+
+        response = self.client.patch(self.path, payload, format='json')
+        self.assertEqual(response.status_code, 200)
+        self.assertDictEqual(response.data, expected_response)
+
+        self.assertEqual(orders.count(), 1)
+        self.assertEqual(orders.first().pk, 2)
 
     def test_missing_fields(self):
         payload = {"regions": [11, 33, 2]}
@@ -694,8 +804,8 @@ class TestAssignView(APITestCase):
         Courier.objects.create(
             courier_id=self.courier_id, courier_type="bike", regions=[15, 12], working_hours=["09:00-18:00"]
         )
-        Order.objects.create(order_id=1, weight=0.23, region=12, delivery_hours=["16:00-18:00"])
-        Order.objects.create(order_id=2, weight=14, region=15, delivery_hours=["08:00-09:01"])
+        Order.objects.create(order_id=1, weight=0.19, region=12, delivery_hours=["16:00-18:00"])
+        Order.objects.create(order_id=2, weight=14.81, region=15, delivery_hours=["08:00-09:01"])
 
     @freeze_time('2021-01-01 13:00:00')
     def test_basic(self):
