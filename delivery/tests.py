@@ -477,6 +477,62 @@ class TestOrderCreateView(APITestCase):
         self.assertEqual(order.region, 1)
         self.assertListEqual(order.delivery_hours, ["09:00-18:00"])
 
+    def test_missing_fields(self):
+        payload = {
+            "data": [
+                {
+                    "order_id": 1,
+                    "weight": 0.23,
+                    "delivery_hours": ["09:00-18:00"]
+                }
+            ]
+        }
+        expected_response = {
+            "validation_error": {
+                "orders": [
+                    {
+                        "id": 1,
+                        "region": ["This field is required."]
+                    },
+                ]
+            }
+        }
+        response = self.client.post(self.path, payload, format='json')
+        self.assertEqual(response.status_code, 400)
+        self.assertDictEqual(response.data, expected_response)
+
+        qs = Order.objects.all()
+        self.assertEqual(qs.count(), 0)
+
+    def test_extra_fields(self):
+        payload = {
+            "data": [
+                {
+                    "order_id": 1,
+                    "weight": 0.23,
+                    "region": 1,
+                    "courier_id": 5,
+                    "delivery_hours": ["09:00-18:00"]
+                }
+            ]
+        }
+        expected_response = {
+            "validation_error": {
+                "orders": [
+                    {
+                        "id": 1,
+                        "courier_id": "Unexpected field."
+                    },
+                ]
+            }
+        }
+        response = self.client.post(self.path, payload, format='json')
+        self.assertEqual(response.status_code, 400)
+        self.assertDictEqual(response.data, expected_response)
+
+        qs = Order.objects.all()
+        self.assertEqual(qs.count(), 0)
+
     def test_bad_region(self):
         payload = {
             "data": [
