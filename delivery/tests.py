@@ -370,15 +370,15 @@ class TestCourierUpdateView(APITestCase):
 
     def test_basic(self):
         payload = {
-            "regions": [11, 33, 2],
-            "courier_type": "foot",
-            "working_hours": ["10:00-12:00"]
+            "regions": [20, 17, 16, 15],
+            "courier_type": "car",
+            "working_hours": ["09:30-17:30"]
         }
         expected_response = {
             "courier_id": self.courier_id,
-            "courier_type": FOOT,
-            "regions": [11, 33, 2],
-            "working_hours": ["10:00-12:00"]
+            "courier_type": CAR,
+            "regions": [20, 17, 16, 15],
+            "working_hours": ["09:30-17:30"]
         }
         response = self.client.patch(self.path, payload, format='json')
 
@@ -388,9 +388,12 @@ class TestCourierUpdateView(APITestCase):
 
         # check db
         courier = Courier.objects.get(pk=self.courier_id)
-        self.assertEqual(courier.courier_type, FOOT)
-        self.assertListEqual(courier.regions, [11, 33, 2])
-        self.assertListEqual(courier.working_hours, ["10:00-12:00"])
+        self.assertEqual(courier.courier_type, CAR)
+        self.assertListEqual(courier.regions, [20, 17, 16, 15])
+        self.assertListEqual(courier.working_hours, ["09:30-17:30"])
+
+        orders = Order.objects.filter(courier_id=self.courier_id)
+        self.assertEqual(orders.count(), 4)
 
     def test_drop_by_weight(self):
         orders = Order.objects.filter(courier_id=self.courier_id)
