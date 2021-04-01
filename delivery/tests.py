@@ -1,3 +1,4 @@
+from django.utils import timezone
 from rest_framework.reverse import reverse
 from rest_framework.test import APITestCase
 from freezegun import freeze_time
@@ -807,11 +808,12 @@ class TestAssignView(APITestCase):
         Courier.objects.create(
             courier_id=self.courier_id, courier_type="bike", regions=[15, 12], working_hours=["09:00-18:00"]
         )
-        Order.objects.create(order_id=1, weight=0.19, region=12, delivery_hours=["16:00-18:00"])
-        Order.objects.create(order_id=2, weight=14.81, region=15, delivery_hours=["08:00-09:01"])
 
     @freeze_time('2021-01-01 13:00:00')
     def test_basic(self):
+        Order.objects.create(order_id=1, weight=0.19, region=12, delivery_hours=["16:00-18:00"])
+        Order.objects.create(order_id=2, weight=14.81, region=15, delivery_hours=["08:00-09:01"])
+
         payload = {
             "courier_id": self.courier_id
         }
@@ -828,6 +830,117 @@ class TestAssignView(APITestCase):
         # check db
         qs = Order.objects.filter(courier_id=self.courier_id)
         self.assertEqual(qs.count(), 2)
+        courier = Courier.objects.get(pk=self.courier_id)
+        self.assertEqual(courier.assign_time.isoformat(), "2021-01-01T13:00:00+00:00")
+
+    @freeze_time('2021-01-01 13:00:00')
+    def test_assign_by_weight(self):
+        for i in range(1, 5):
+            Order.objects.create(order_id=i, weight=4, region=15, delivery_hours=["09:00-18:00"])
+
+        payload = {
+            "courier_id": self.courier_id
+        }
+        expected_response = {
+            "orders": [{"id": 1}, {"id": 2}, {"id": 3}],
+            "assign_time": "2021-01-01T13:00:00+00:00"
+        }
+        response = self.client.post(self.path, payload, format='json')
+
+        # check response
+        self.assertEqual(response.status_code, 200)
+        self.assertDictEqual(response.data, expected_response)
+
+        # check db
+        qs = Order.objects.filter(courier_id=self.courier_id)
+        self.assertEqual(qs.count(), 3)
+
+    @freeze_time('2021-01-01 13:00:00')
+    def test_assign_by_regions_and_hours(self):
+        Order.objects.create(order_id=1, weight=2, region=15, delivery_hours=["09:00-18:00"])
+        Order.objects.create(order_id=2, weight=2, region=9, delivery_hours=["09:00-18:00"])
+        Order.objects.create(order_id=3, weight=2, region=12, delivery_hours=["09:00-18:00"])
+
+        payload = {
+            "courier_id": self.courier_id
+        }
+        response = self.client.post(self.path, payload, format='json')
+        self.assertEqual(response.status_code, 200)
+
+        qs = Order.objects.filter(courier_id=self.courier_id)
+        self.assertEqual(qs.count(), 2)
+
+    @freeze_time('2021-01-01 13:00:00')
+    def test_all(self):
+        Order.objects.create(order_id=1, weight=4, region=15, delivery_hours=["08:00-20:00"])
+        Order.objects.create(order_id=2, weight=4, region=9, delivery_hours=["09:00-18:00"])
+        Order.objects.create(order_id=3, weight=4, region=12, delivery_hours=["09:00-18:00"])
+        Order.objects.create(order_id=4, weight=4, region=15, delivery_hours=["19:00-20:00"])
+        Order.objects.create(order_id=5, weight=4, region=12, delivery_hours=["13:00-16:00"])
+        Order.objects.create(order_id=6, weight=4, region=12, delivery_hours=["09:00-18:00"])
+
+        payload = {
+            "courier_id": self.courier_id
+        }
+        response = self.client.post(self.path, payload, format='json')
+        self.assertEqual(response.status_code, 200)
+
+        qs = Order.objects.filter(courier_id=self.courier_id)
+        self.assertEqual(qs.count(), 3)
+
+    @freeze_time('2021-01-01 13:00:00')
+    def test_nothing(self):
+        Order.objects.create(order_id=1, weight=16, region=12, delivery_hours=["09:00-18:00"])
+        Order.objects.create(order_id=2, weight=4, region=9, delivery_hours=["09:00-20:00"])
+        Order.objects.create(order_id=3, weight=4, region=12, delivery_hours=["20:00-21:00"])
+
+        payload = {
+            "courier_id": self.courier_id
+        }
+        expected_response = {
+            "orders": [],
+        }
+        response = self.client.post(self.path, payload, format='json')
+        self.assertDictEqual(response.data, expected_response)
+        self.assertEqual(response.status_code, 200)
+
+        qs = Order.objects.filter(courier_id=self.courier_id)
+        self.assertEqual(qs.count(), 0)
+        courier = Courier.objects.get(pk=self.courier_id)
+        self.assertIsNone(courier.assign_time)
+
+    def test_complete(self):
+        for i in range(1, 6):
+            Order.objects.create(order_id=i, weight=3, region=15, delivery_hours=["09:00-18:00"])
+
+        payload = {
+            "courier_id": self.courier_id
+        }
+        expected_response = {
+            "orders": [{"id": 1}, {"id": 2}, {"id": 3}, {"id": 4}, {"id": 5}],
+            "assign_time": "2021-01-01T13:00:00+00:00"
+        }
+        with freeze_time('2021-01-01 13:00:00') as ft:
+            response = self.client.post(self.path, payload, format='json')
+            self.assertDictEqual(response.data, expected_response)
+            self.assertEqual(response.status_code, 200)
+
+            qs = Order.objects.filter(courier_id=self.courier_id)
+            self.assertEqual(qs.count(), 5)
+
+            ft.tick()
+
+            Order.objects.filter(pk__in=[2, 4]).update(complete_time=timezone.now())
+            response = self.client.post(self.path, payload, format='json')
+            expected_response = {
+                "orders": [{"id": 1}, {"id": 3}, {"id": 5}],
+                "assign_time": "2021-01-01T13:00:00+00:00"
+            }
+            self.assertDictEqual(response.data, expected_response)
+            self.assertEqual(response.status_code, 200)
+
+            qs = Order.objects.filter(courier_id=self.courier_id)
+            self.assertEqual(qs.count(), 5)
 
 
 class TestCompleteView(APITestCase):
@@ -852,11 +965,21 @@ class TestCompleteView(APITestCase):
             "order_id": self.order_id
         }
         response = self.client.post(self.path, payload, format='json')
-
-        # check response
         self.assertEqual(response.status_code, 200)
         self.assertDictEqual(response.data, expected_response)
 
-        # check db
+        order = Order.objects.get(pk=self.order_id)
+        self.assertEqual(order.complete_time.isoformat(), "2021-01-10T10:33:01.420000+00:00")
+
+        # does not change the complete time if the order is already completed
+        payload = {
+            "courier_id": self.courier_id,
+            "order_id": self.order_id,
+            "complete_time": "2021-03-15T12:30:00Z"
+        }
+        response = self.client.post(self.path, payload, format='json')
+        self.assertEqual(response.status_code, 200)
+        self.assertDictEqual(response.data, expected_response)
+
         order = Order.objects.get(pk=self.order_id)
         self.assertEqual(order.complete_time.isoformat(), "2021-01-10T10:33:01.420000+00:00")
