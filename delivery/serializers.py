@@ -34,6 +34,11 @@ class TimeRangeField(serializers.CharField):
 
 
 class DeserializerMixin:
+    """
+    Disallows extra fields and adds an id value to every item with validation errors
+    """
+    id_field = None
+
     def to_internal_value(self, data):
         """
         Dict of native values <- Dict of primitive datatypes.
@@ -71,20 +76,23 @@ class DeserializerMixin:
             errors[key] = 'Unexpected field.'
 
         if errors:
-            errors.update({'id': data.get(self.id_field, 0)})
-            errors.move_to_end('id', last=False)
+            if self.id_field:
+                errors.update({'id': data.get(self.id_field, 0)})
+                errors.move_to_end('id', last=False)
             raise ValidationError(errors)
 
         return ret
 
 
-class CourierSerializer(serializers.ModelSerializer):
-    courier_id = serializers.IntegerField(
-        min_value=1,
-        validators=[UniqueValidator(queryset=Courier.objects.all(), message='Courier with this id already exists.')]
-    )
+class CourierSerializer(DeserializerMixin, serializers.ModelSerializer):
     regions = serializers.ListField(child=serializers.IntegerField(min_value=1))
     working_hours = serializers.ListField(child=TimeRangeField())
+
+    def to_representation(self, instance):
+        ret = super().to_representation(instance)
+        ret['courier_id'] = instance.courier_id
+        ret.move_to_end('courier_id', last=False)
+        return ret
 
     def update(self, instance, validated_data):
         super().update(instance, validated_data)
@@ -122,14 +130,25 @@ class CourierSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Courier
-        fields = ['courier_id', 'courier_type', 'regions', 'working_hours']
+        fields = ['courier_type', 'regions', 'working_hours']
 
 
-class CourierShortSerializer(DeserializerMixin, CourierSerializer):
+class CourierShortSerializer(DeserializerMixin, serializers.ModelSerializer):
     id_field = 'courier_id'
+
+    courier_id = serializers.IntegerField(
+        min_value=1,
+        validators=[UniqueValidator(queryset=Courier.objects.all(), message='Courier with this id already exists.')]
+    )
+    regions = serializers.ListField(child=serializers.IntegerField(min_value=1))
+    working_hours = serializers.ListField(child=TimeRangeField())
 
     def to_representation(self, instance):
         return {'id': instance.courier_id}
+
+    class Meta:
+        model = Courier
+        fields = ['courier_id', 'courier_type', 'regions', 'working_hours']
 
 
 class OrderSerializer(DeserializerMixin, serializers.ModelSerializer):
@@ -150,8 +169,8 @@ class OrderSerializer(DeserializerMixin, serializers.ModelSerializer):
         fields = ['order_id', 'weight', 'region', 'delivery_hours']
 
 
-class AssignSerializer(serializers.ModelSerializer):
-    orders = serializers.SerializerMethodField()
+class AssignSerializer(DeserializerMixin, serializers.ModelSerializer):
+    courier_id = serializers.IntegerField(min_value=1, write_only=True)
 
     @staticmethod
     def get_orders(obj):
@@ -159,8 +178,9 @@ class AssignSerializer(serializers.ModelSerializer):
 
     def to_representation(self, instance):
         ret = super().to_representation(instance)
-        if ret['assign_time'] is None:
-            del ret['assign_time']
+        ret['orders'] = self.get_orders(instance)
+        if instance.assign_time is not None:
+            ret['assign_time'] = instance.assign_time.isoformat()
         return ret
 
     def save(self, courier, *args, **kwargs):
@@ -195,23 +215,17 @@ class AssignSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Courier
-        fields = ['assign_time', 'orders']
-        read_only_fields = ['assign_time', 'orders']
+        fields = ['courier_id']
 
 
-class CompleteSerializer(serializers.ModelSerializer):
-    courier_id = serializers.IntegerField(min_value=1)
+class CompleteSerializer(DeserializerMixin, serializers.ModelSerializer):
+    courier_id = serializers.IntegerField(min_value=1, write_only=True)
+    complete_time = serializers.DateTimeField(write_only=True)
 
     def validate_courier_id(self, value):
         if self.instance.courier is None or self.instance.courier.courier_id != value:
             raise serializers.ValidationError("Order is not assigned to this courier")
         return value
-
-    def to_representation(self, instance):
-        ret = super().to_representation(instance)
-        del ret['courier_id']
-        del ret['complete_time']
-        return ret
 
     def update(self, instance, validated_data):
         if instance.complete_time:

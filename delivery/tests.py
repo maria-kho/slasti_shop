@@ -332,7 +332,7 @@ class TestAssignView(APITestCase):
         }
         expected_response = {
             "orders": [{"id": 1}, {"id": 2}],
-            "assign_time": "2021-01-01T13:00:00Z"
+            "assign_time": "2021-01-01T13:00:00+00:00"
         }
         response = self.client.post(self.path, payload, format='json')
 

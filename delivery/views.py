@@ -29,7 +29,7 @@ class CourierCreateView(generics.CreateAPIView):
         return Response({'couriers': serializer.data}, status=status.HTTP_201_CREATED)
 
 
-class CourierUpdateView(generics.UpdateAPIView):
+class CourierUpdateView(generics.RetrieveUpdateAPIView):
     """
     API endpoint to update some parameters of a courier
     """
@@ -91,7 +91,7 @@ class CompleteView(mixins.UpdateModelMixin, generics.GenericAPIView):
     queryset = Order.objects.order_by('order_id')
 
     def get_object(self):
-        order_id = self.request.data['order_id']
+        order_id = self.request.data.get('order_id')
         if not order_id:
             raise ValidationError('"order_id": this field is required')
         if not isinstance(order_id, int) or order_id < 1:
