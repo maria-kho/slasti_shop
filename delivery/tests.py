@@ -9,6 +9,7 @@ from delivery.models import Courier, Order
 class TestCourierCreateView(APITestCase):
     def setUp(self):
         self.path = reverse('couriers')
+        self.maxDiff = None
 
     def test_basic(self):
         payload = {
@@ -33,11 +34,12 @@ class TestCourierCreateView(APITestCase):
                 }
             ]
         }
+        expected_response = {"couriers": [{"id": 1}, {"id": 3}, {"id": 5}]}
         response = self.client.post(self.path, payload, format='json')
 
         # check response
         self.assertEqual(response.status_code, 201)
-        self.assertDictEqual(response.data, {"couriers": [{"id": 1}, {"id": 3}, {"id": 5}]})
+        self.assertDictEqual(response.data, expected_response)
 
         # check db
         qs = Courier.objects.all()
@@ -65,8 +67,17 @@ class TestCourierCreateView(APITestCase):
                 },
             ]
         }
+        expected_response = {
+            "validation_error": {
+                "couriers": [{
+                    "id": 3,
+                    "bad_field": "Unexpected field."
+                }]
+            }
+        }
         response = self.client.post(self.path, payload, format='json')
         self.assertEqual(response.status_code, 400)
+        self.assertDictEqual(response.data, expected_response)
 
         qs = Courier.objects.all()
         self.assertEqual(qs.count(), 0)
@@ -86,8 +97,18 @@ class TestCourierCreateView(APITestCase):
                 },
             ]
         }
+        expected_response = {
+            "validation_error": {
+                "couriers": [{
+                    "id": 1,
+                    "courier_type": ["This field is required."],
+                    "regions": ["This field is required."]
+                }]
+            }
+        }
         response = self.client.post(self.path, payload, format='json')
         self.assertEqual(response.status_code, 400)
+        self.assertDictEqual(response.data, expected_response)
 
         qs = Courier.objects.all()
         self.assertEqual(qs.count(), 0)
@@ -109,8 +130,17 @@ class TestCourierCreateView(APITestCase):
                 },
             ]
         }
+        expected_response = {
+            "validation_error": {
+                "couriers": [{
+                    "id": 1,
+                    "courier_type": ['"ship" is not a valid choice.'],
+                }]
+            }
+        }
         response = self.client.post(self.path, payload, format='json')
         self.assertEqual(response.status_code, 400)
+        self.assertDictEqual(response.data, expected_response)
 
         qs = Courier.objects.all()
         self.assertEqual(qs.count(), 0)
@@ -122,12 +152,33 @@ class TestCourierCreateView(APITestCase):
                     "courier_id": 0,
                     "courier_type": "bike",
                     "working_hours": ["11:35-14:05", "09:00-11:00"],
-                    "regions": [0, 12, 22],
+                    "regions": [1, 12, 22],
+                },
+                {
+                    "courier_id": 1.5,
+                    "courier_type": "bike",
+                    "working_hours": ["11:35-14:05", "09:00-11:00"],
+                    "regions": [1, 12, 22],
                 }
             ]
         }
+        expected_response = {
+            "validation_error": {
+                "couriers": [
+                    {
+                        "id": 0,
+                        "courier_id": ["Ensure this value is greater than or equal to 1."],
+                    },
+                    {
+                        "id": "1.5",
+                        "courier_id": ["A valid integer is required."],
+                    },
+                ]
+            }
+        }
         response = self.client.post(self.path, payload, format='json')
         self.assertEqual(response.status_code, 400)
+        self.assertDictEqual(response.data, expected_response)
 
         qs = Courier.objects.all()
         self.assertEqual(qs.count(), 0)
@@ -141,12 +192,21 @@ class TestCourierCreateView(APITestCase):
                     "courier_id": 10,
                     "courier_type": "bike",
                     "working_hours": ["11:35-14:05", "09:00-11:00"],
-                    "regions": [0, 12, 22],
+                    "regions": [1, 12, 22],
                 }
             ]
         }
+        expected_response = {
+            "validation_error": {
+                "couriers": [{
+                    "id": 10,
+                    "courier_id": ["Courier with this id already exists."],
+                }]
+            }
+        }
         response = self.client.post(self.path, payload, format='json')
         self.assertEqual(response.status_code, 400)
+        self.assertDictEqual(response.data, expected_response)
 
         qs = Courier.objects.all()
         self.assertEqual(qs.count(), 1)
@@ -162,12 +222,24 @@ class TestCourierCreateView(APITestCase):
                     "courier_id": 1,
                     "courier_type": "bike",
                     "working_hours": ["11:35-14:05", "09:00-11:00"],
-                    "regions": [0, 12, 22],
+                    "regions": [15, "Uralmash", 0],
                 }
             ]
         }
+        expected_response = {
+            "validation_error": {
+                "couriers": [{
+                    "id": 1,
+                    "regions": {
+                        1: ["A valid integer is required."],
+                        2: ["Ensure this value is greater than or equal to 1."]
+                    }
+                }]
+            }
+        }
         response = self.client.post(self.path, payload, format='json')
         self.assertEqual(response.status_code, 400)
+        self.assertDictEqual(response.data, expected_response)
 
         qs = Courier.objects.all()
         self.assertEqual(qs.count(), 0)
@@ -183,8 +255,17 @@ class TestCourierCreateView(APITestCase):
                 }
             ]
         }
+        expected_response = {
+            "validation_error": {
+                "couriers": [{
+                    "id": 1,
+                    "regions": ['Expected a list of items but got type "int".']
+                }]
+            }
+        }
         response = self.client.post(self.path, payload, format='json')
         self.assertEqual(response.status_code, 400)
+        self.assertDictEqual(response.data, expected_response)
 
         qs = Courier.objects.all()
         self.assertEqual(qs.count(), 0)
@@ -200,8 +281,20 @@ class TestCourierCreateView(APITestCase):
                 }
             ]
         }
+        expected_response = {
+            "validation_error": {
+                "couriers": [{
+                    "id": 1,
+                    "working_hours": {
+                        0: ["Incorrect format. Expected `HH:MM-HH:MM`."],
+                        1: ["Incorrect format. Expected `HH:MM-HH:MM`."],
+                    }
+                }]
+            }
+        }
         response = self.client.post(self.path, payload, format='json')
         self.assertEqual(response.status_code, 400)
+        self.assertDictEqual(response.data, expected_response)
 
         qs = Courier.objects.all()
         self.assertEqual(qs.count(), 0)
@@ -212,13 +305,26 @@ class TestCourierCreateView(APITestCase):
                 {
                     "courier_id": 1,
                     "courier_type": "bike",
-                    "working_hours": ["11:59-14:05", "05:60-11:00"],
+                    "working_hours": ["11:59-24:05", "05:60-11:00", 10],
                     "regions": [12],
                 }
             ]
         }
+        expected_response = {
+            "validation_error": {
+                "couriers": [{
+                    "id": 1,
+                    "working_hours": {
+                        0: ["Incorrect value. Hours must be between 0 and 23, minutes between 0 and 59."],
+                        1: ["Incorrect value. Hours must be between 0 and 23, minutes between 0 and 59."],
+                        2: ['Incorrect type. Expected a string, but got type "int".']
+                    }
+                }]
+            }
+        }
         response = self.client.post(self.path, payload, format='json')
         self.assertEqual(response.status_code, 400)
+        self.assertDictEqual(response.data, expected_response)
 
         qs = Courier.objects.all()
         self.assertEqual(qs.count(), 0)
@@ -234,8 +340,17 @@ class TestCourierCreateView(APITestCase):
                 }
             ]
         }
+        expected_response = {
+            "validation_error": {
+                "couriers": [{
+                    "id": 1,
+                    "working_hours": ['Expected a list of items but got type "str".']
+                }]
+            }
+        }
         response = self.client.post(self.path, payload, format='json')
         self.assertEqual(response.status_code, 400)
+        self.assertDictEqual(response.data, expected_response)
 
         qs = Courier.objects.all()
         self.assertEqual(qs.count(), 0)
