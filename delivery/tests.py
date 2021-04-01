@@ -361,16 +361,20 @@ class TestCourierUpdateView(APITestCase):
         self.courier_id = 2
         self.path = reverse('courier', args=(self.courier_id,))
         Courier.objects.create(
-            courier_id=self.courier_id, courier_type="bike", regions=[15], working_hours=["09:00-18:00"]
+            courier_id=self.courier_id, courier_type=BIKE, regions=[15], working_hours=["09:00-18:00"]
         )
 
     def test_basic(self):
-        payload = {"regions": [11, 33, 2], "courier_type": "foot"}
+        payload = {
+            "regions": [11, 33, 2],
+            "courier_type": "foot",
+            "working_hours": ["10:00-12:00"]
+        }
         expected_response = {
             "courier_id": self.courier_id,
-            "courier_type": "foot",
+            "courier_type": FOOT,
             "regions": [11, 33, 2],
-            "working_hours": ["09:00-18:00"]
+            "working_hours": ["10:00-12:00"]
         }
         response = self.client.patch(self.path, payload, format='json')
 
@@ -382,12 +386,56 @@ class TestCourierUpdateView(APITestCase):
         courier = Courier.objects.get(pk=self.courier_id)
         self.assertEqual(courier.courier_type, FOOT)
         self.assertListEqual(courier.regions, [11, 33, 2])
+        self.assertListEqual(courier.working_hours, ["10:00-12:00"])
+
+    def test_missing_fields(self):
+        payload = {"regions": [11, 33, 2]}
+        expected_response = {
+            "courier_id": self.courier_id,
+            "courier_type": BIKE,
+            "regions": [11, 33, 2],
+            "working_hours": ["09:00-18:00"]
+        }
+        response = self.client.patch(self.path, payload, format='json')
+        self.assertEqual(response.status_code, 200)
+        self.assertDictEqual(response.data, expected_response)
+
+        courier = Courier.objects.get(pk=self.courier_id)
+        self.assertEqual(courier.courier_type, BIKE)
+        self.assertListEqual(courier.regions, [11, 33, 2])
         self.assertListEqual(courier.working_hours, ["09:00-18:00"])
+
+    def test_extra_field(self):
+        payload = {
+            "regions": [11, 33, 2],
+            "courier_type": "foot",
+            "courier_id": 5
+        }
+        expected_response = {
+            "courier_id": "Unexpected field."
+        }
+        response = self.client.patch(self.path, payload, format='json')
+        self.assertEqual(response.status_code, 400)
+        self.assertDictEqual(response.data, expected_response)
+
+    def test_not_found(self):
+        path = reverse('courier', args=(5,))
+        payload = {
+            "regions": [11, 33, 2],
+            "courier_type": "foot",
+        }
+        expected_response = {
+            "detail": "Not found."
+        }
+        response = self.client.patch(path, payload, format='json')
+        self.assertEqual(response.status_code, 404)
+        self.assertDictEqual(response.data, expected_response)
 
 
 class TestOrderCreateView(APITestCase):
     def setUp(self):
         self.path = reverse('orders')
+        self.maxDiff = None
 
     def test_basic(self):
         payload = {
@@ -428,6 +476,159 @@ class TestOrderCreateView(APITestCase):
         self.assertEqual(order.weight, 50)
         self.assertEqual(order.region, 1)
         self.assertListEqual(order.delivery_hours, ["09:00-18:00"])
+
+    def test_bad_region(self):
+        payload = {
+            "data": [
+                {
+                    "order_id": 1,
+                    "weight": 0.23,
+                    "region": 0,
+                    "delivery_hours": ["09:00-18:00"]
+                },
+                {
+                    "order_id": 2,
+                    "weight": 50,
+                    "region": "Uralmash",
+                    "delivery_hours": ["09:00-18:00"]
+                },
+            ]
+        }
+        expected_response = {
+            "validation_error": {
+                "orders": [
+                    {
+                        "id": 1,
+                        "region": ["Ensure this value is greater than or equal to 1."],
+                    },
+                    {
+                        "id": 2,
+                        "region": ["A valid integer is required."]
+                    },
+                ]
+            }
+        }
+        response = self.client.post(self.path, payload, format='json')
+        self.assertEqual(response.status_code, 400)
+        self.assertDictEqual(response.data, expected_response)
+
+        qs = Order.objects.all()
+        self.assertEqual(qs.count(), 0)
+
+    def test_bad_weight(self):
+        payload = {
+            "data": [
+                {
+                    "order_id": 1,
+                    "weight": 0,
+                    "region": 1,
+                    "delivery_hours": ["09:00-18:00"]
+                },
+                {
+                    "order_id": 2,
+                    "weight": 50.01,
+                    "region": 2,
+                    "delivery_hours": ["09:00-18:00"]
+                },
+                {
+                    "order_id": 3,
+                    "weight": 5.005,
+                    "region": 2,
+                    "delivery_hours": ["09:00-18:00"]
+                },
+            ]
+        }
+        expected_response = {
+            "validation_error": {
+                "orders": [
+                    {
+                        "id": 1,
+                        "weight": ["Ensure this value is greater than or equal to 0.005."],
+                    },
+                    {
+                        "id": 2,
+                        "weight": ["Ensure this value is less than or equal to 50."]
+                    },
+                    {
+                        "id": 3,
+                        "weight": ["Ensure that there are no more than 2 decimal places."]
+                    },
+                ]
+            }
+        }
+        response = self.client.post(self.path, payload, format='json')
+        self.assertEqual(response.status_code, 400)
+        self.assertDictEqual(response.data, expected_response)
+
+        qs = Order.objects.all()
+        self.assertEqual(qs.count(), 0)
+
+    def test_existing_order(self):
+        Order.objects.create(order_id=10, weight=25, region=5, delivery_hours=["10:00-12:00"])
+        payload = {
+            "data": [
+                {
+                    "order_id": 10,
+                    "weight": 0.23,
+                    "region": 5,
+                    "delivery_hours": ["09:00-18:00"]
+                }
+            ]
+        }
+        expected_response = {
+            "validation_error": {
+                "orders": [
+                    {
+                        "id": 10,
+                        "order_id": ["Order with this id already exists."],
+                    }
+                ]
+            }
+        }
+        response = self.client.post(self.path, payload, format='json')
+        self.assertEqual(response.status_code, 400)
+        self.assertDictEqual(response.data, expected_response)
+
+        qs = Order.objects.all()
+        self.assertEqual(qs.count(), 1)
+
+    def test_bad_order_id(self):
+        payload = {
+            "data": [
+                {
+                    "order_id": 0,
+                    "weight": 0.23,
+                    "region": 5,
+                    "delivery_hours": ["09:00-18:00"]
+                },
+                {
+                    "order_id": 1.5,
+                    "weight": 0.23,
+                    "region": 5,
+                    "delivery_hours": ["09:00-18:00"]
+                }
+            ]
+        }
+        expected_response = {
+            "validation_error": {
+                "orders": [
+                    {
+                        "id": 0,
+                        "order_id": ["Ensure this value is greater than or equal to 1."],
+                    },
+                    {
+                        "id": "1.5",
+                        "order_id": ["A valid integer is required."],
+                    }
+                ]
+            }
+        }
+        response = self.client.post(self.path, payload, format='json')
+        self.assertEqual(response.status_code, 400)
+        self.assertDictEqual(response.data, expected_response)
+
+        qs = Order.objects.all()
+        self.assertEqual(qs.count(), 0)
 
 
 class TestAssignView(APITestCase):
