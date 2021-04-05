@@ -1,10 +1,12 @@
+from datetime import datetime
+
 from django.utils import timezone
 from rest_framework.reverse import reverse
 from rest_framework.test import APITestCase
 from freezegun import freeze_time
 
 from delivery.consts import CAR, FOOT, BIKE
-from delivery.models import Courier, Order
+from delivery.models import Courier, Order, Batch
 
 
 class TestCourierCreateView(APITestCase):
@@ -364,10 +366,13 @@ class TestCourierUpdateView(APITestCase):
         Courier.objects.create(
             courier_id=self.courier_id, courier_type=BIKE, regions=[15, 16, 17], working_hours=["09:00-18:00"]
         )
-        Order.objects.create(order_id=1, weight=3.1, region=15, delivery_hours=["10:00-13:00"], courier_id=2)
-        Order.objects.create(order_id=2, weight=3, region=16, delivery_hours=["10:00-16:00"], courier_id=2)
-        Order.objects.create(order_id=3, weight=2.9, region=17, delivery_hours=["10:00-12:01"], courier_id=2)
-        Order.objects.create(order_id=4, weight=1.01, region=17, delivery_hours=["10:00-12:00"], courier_id=2)
+        self.batch = Batch.objects.create(
+            current_courier_id=self.courier_id, assign_time=datetime(2021, 3, 29, 9, 30), assign_type=BIKE
+        )
+        Order.objects.create(order_id=1, weight=3.1, region=15, delivery_hours=["10:00-13:00"], batch=self.batch)
+        Order.objects.create(order_id=2, weight=3, region=16, delivery_hours=["10:00-16:00"], batch=self.batch)
+        Order.objects.create(order_id=3, weight=2.9, region=17, delivery_hours=["10:00-12:01"], batch=self.batch)
+        Order.objects.create(order_id=4, weight=1.01, region=17, delivery_hours=["10:00-12:00"], batch=self.batch)
 
     def test_basic(self):
         payload = {
@@ -393,11 +398,11 @@ class TestCourierUpdateView(APITestCase):
         self.assertListEqual(courier.regions, [20, 17, 16, 15])
         self.assertListEqual(courier.working_hours, ["09:30-17:30"])
 
-        orders = Order.objects.filter(courier_id=self.courier_id)
+        orders = Order.objects.filter(batch__current_courier_id=self.courier_id)
         self.assertEqual(orders.count(), 4)
 
     def test_drop_by_weight(self):
-        orders = Order.objects.filter(courier_id=self.courier_id)
+        orders = Order.objects.filter(batch__current_courier_id=self.courier_id)
         self.assertEqual(orders.count(), 4)
 
         payload = {
@@ -417,7 +422,7 @@ class TestCourierUpdateView(APITestCase):
         self.assertEqual(orders.count(), 3)
 
     def test_drop_by_regions(self):
-        orders = Order.objects.filter(courier_id=self.courier_id)
+        orders = Order.objects.filter(batch__current_courier_id=self.courier_id)
         self.assertEqual(orders.count(), 4)
 
         payload = {
@@ -437,7 +442,7 @@ class TestCourierUpdateView(APITestCase):
         self.assertEqual(orders.count(), 3)
 
     def test_drop_by_hours(self):
-        orders = Order.objects.filter(courier_id=self.courier_id)
+        orders = Order.objects.filter(batch__current_courier_id=self.courier_id)
         self.assertEqual(orders.count(), 4)
 
         payload = {
@@ -457,7 +462,7 @@ class TestCourierUpdateView(APITestCase):
         self.assertEqual(orders.count(), 3)
 
     def test_drop_multiple(self):
-        orders = Order.objects.filter(courier_id=self.courier_id)
+        orders = Order.objects.filter(batch__current_courier_id=self.courier_id)
         self.assertEqual(orders.count(), 4)
 
         payload = {
@@ -480,7 +485,7 @@ class TestCourierUpdateView(APITestCase):
 
     def test_drop_multiple_heavy(self):
         Order.objects.filter(order_id=1).update(weight=8)
-        orders = Order.objects.filter(courier_id=self.courier_id)
+        orders = Order.objects.filter(batch__current_courier_id=self.courier_id)
         self.assertEqual(orders.count(), 4)
 
         payload = {
@@ -806,7 +811,7 @@ class TestAssignView(APITestCase):
         self.courier_id = 2
         self.path = reverse('assign')
         Courier.objects.create(
-            courier_id=self.courier_id, courier_type="bike", regions=[15, 12], working_hours=["09:00-18:00"]
+            courier_id=self.courier_id, courier_type=BIKE, regions=[15, 12], working_hours=["09:00-18:00"]
         )
 
     @freeze_time('2021-01-01 13:00:00')
@@ -828,10 +833,11 @@ class TestAssignView(APITestCase):
         self.assertDictEqual(response.data, expected_response)
 
         # check db
-        qs = Order.objects.filter(courier_id=self.courier_id)
+        qs = Order.objects.filter(batch__current_courier_id=self.courier_id)
         self.assertEqual(qs.count(), 2)
-        courier = Courier.objects.get(pk=self.courier_id)
-        self.assertEqual(courier.assign_time.isoformat(), "2021-01-01T13:00:00+00:00")
+        batch = Batch.objects.get(current_courier_id=self.courier_id)
+        self.assertEqual(batch.assign_time.isoformat(), "2021-01-01T13:00:00+00:00")
+        self.assertEqual(batch.assign_type, BIKE)
 
     @freeze_time('2021-01-01 13:00:00')
     def test_assign_by_weight(self):
@@ -852,7 +858,7 @@ class TestAssignView(APITestCase):
         self.assertDictEqual(response.data, expected_response)
 
         # check db
-        qs = Order.objects.filter(courier_id=self.courier_id)
+        qs = Order.objects.filter(batch__current_courier_id=self.courier_id)
         self.assertEqual(qs.count(), 3)
 
     @freeze_time('2021-01-01 13:00:00')
@@ -867,7 +873,7 @@ class TestAssignView(APITestCase):
         response = self.client.post(self.path, payload, format='json')
         self.assertEqual(response.status_code, 200)
 
-        qs = Order.objects.filter(courier_id=self.courier_id)
+        qs = Order.objects.filter(batch__current_courier_id=self.courier_id)
         self.assertEqual(qs.count(), 2)
 
     @freeze_time('2021-01-01 13:00:00')
@@ -885,7 +891,7 @@ class TestAssignView(APITestCase):
         response = self.client.post(self.path, payload, format='json')
         self.assertEqual(response.status_code, 200)
 
-        qs = Order.objects.filter(courier_id=self.courier_id)
+        qs = Order.objects.filter(batch__current_courier_id=self.courier_id)
         self.assertEqual(qs.count(), 3)
 
     @freeze_time('2021-01-01 13:00:00')
@@ -904,10 +910,10 @@ class TestAssignView(APITestCase):
         self.assertDictEqual(response.data, expected_response)
         self.assertEqual(response.status_code, 200)
 
-        qs = Order.objects.filter(courier_id=self.courier_id)
+        qs = Order.objects.filter(batch__current_courier_id=self.courier_id)
         self.assertEqual(qs.count(), 0)
         courier = Courier.objects.get(pk=self.courier_id)
-        self.assertIsNone(courier.assign_time)
+        self.assertFalse(hasattr(courier, 'current_batch'))
 
     def test_complete(self):
         for i in range(1, 6):
@@ -925,7 +931,7 @@ class TestAssignView(APITestCase):
             self.assertDictEqual(response.data, expected_response)
             self.assertEqual(response.status_code, 200)
 
-            qs = Order.objects.filter(courier_id=self.courier_id)
+            qs = Order.objects.filter(batch__current_courier_id=self.courier_id)
             self.assertEqual(qs.count(), 5)
 
             ft.tick()
@@ -939,7 +945,7 @@ class TestAssignView(APITestCase):
             self.assertDictEqual(response.data, expected_response)
             self.assertEqual(response.status_code, 200)
 
-            qs = Order.objects.filter(courier_id=self.courier_id)
+            qs = Order.objects.filter(batch__current_courier_id=self.courier_id)
             self.assertEqual(qs.count(), 5)
 
 
@@ -949,13 +955,20 @@ class TestCompleteView(APITestCase):
         self.courier_id = 2
         self.path = reverse('complete')
         Courier.objects.create(
-            courier_id=self.courier_id, courier_type="bike", regions=[15, 12], working_hours=["09:00-18:00"]
+            courier_id=self.courier_id, courier_type=BIKE, regions=[15, 12], working_hours=["09:00-18:00"],
+        )
+        self.batch = Batch.objects.create(
+            current_courier_id=self.courier_id, assign_time=datetime(2021, 1, 10, 9, 0), assign_type=BIKE
         )
         Order.objects.create(
-            order_id=self.order_id, weight=0.23, region=12, delivery_hours=["16:00-18:00"], courier_id=self.courier_id
+            order_id=self.order_id, weight=0.23, region=12, delivery_hours=["16:00-18:00"], batch=self.batch
         )
 
-    def test_basic(self):
+    def test_not_last_order(self):
+        Order.objects.create(
+            order_id=self.order_id + 1, weight=0.23, region=12, delivery_hours=["16:00-18:00"],
+            batch=self.batch
+        )
         payload = {
             "courier_id": self.courier_id,
             "order_id": self.order_id,
@@ -970,6 +983,8 @@ class TestCompleteView(APITestCase):
 
         order = Order.objects.get(pk=self.order_id)
         self.assertEqual(order.complete_time.isoformat(), "2021-01-10T10:33:01.420000+00:00")
+        courier = Courier.objects.get(pk=self.courier_id)
+        self.assertEqual(courier.current_batch, self.batch)
 
         # does not change the complete time if the order is already completed
         payload = {
@@ -981,5 +996,89 @@ class TestCompleteView(APITestCase):
         self.assertEqual(response.status_code, 200)
         self.assertDictEqual(response.data, expected_response)
 
+        order.refresh_from_db()
+        self.assertEqual(order.complete_time.isoformat(), "2021-01-10T10:33:01.420000+00:00")
+        courier.refresh_from_db()
+        self.assertEqual(courier.current_batch, self.batch)
+        self.assertIsNone(courier.past_batches.last())
+
+    def test_last_order(self):
+        courier = Courier.objects.get(pk=self.courier_id)
+        self.assertIsNone(courier.past_batches.last())
+        self.assertEqual(courier.current_batch, self.batch)
+
+        payload = {
+            "courier_id": self.courier_id,
+            "order_id": self.order_id,
+            "complete_time": "2021-01-10T10:33:01.42Z"
+        }
+        expected_response = {
+            "order_id": self.order_id
+        }
+        response = self.client.post(self.path, payload, format='json')
+        self.assertEqual(response.status_code, 200)
+        self.assertDictEqual(response.data, expected_response)
+
         order = Order.objects.get(pk=self.order_id)
         self.assertEqual(order.complete_time.isoformat(), "2021-01-10T10:33:01.420000+00:00")
+        courier.refresh_from_db()
+        self.assertFalse(hasattr(courier, 'current_batch'))
+        self.assertEqual(courier.past_batches.last(), self.batch)
+
+
+class TestCourierRetrieveView(APITestCase):
+    def setUp(self):
+        self.courier_id = 2
+        self.path = reverse('courier', args=(self.courier_id,))
+        Courier.objects.create(
+            courier_id=self.courier_id, courier_type=BIKE, regions=[15, 16, 17], working_hours=["09:00-18:00"],
+        )
+        self.batch = Batch.objects.create(
+            past_courier_id=self.courier_id, assign_type=BIKE, assign_time=datetime(2021, 3, 29, 9, 30)
+        )
+        Order.objects.create(order_id=3, weight=3.1, region=15, delivery_hours=["09:00-18:00"], batch=self.batch,
+                             complete_time=datetime(2021, 3, 29, 10, 0))
+        Order.objects.create(order_id=2, weight=3, region=15, delivery_hours=["09:00-18:00"], batch=self.batch,
+                             complete_time = datetime(2021, 3, 29, 10, 30))
+        Order.objects.create(order_id=5, weight=3, region=15, delivery_hours=["09:00-18:00"], batch=self.batch,
+                             complete_time = datetime(2021, 3, 29, 11, 30))
+        Order.objects.create(order_id=1, weight=2.9, region=17, delivery_hours=["09:00-18:00"], batch=self.batch,
+                             complete_time = datetime(2021, 3, 29, 12, 30))
+        self.batch2 = Batch.objects.create(
+            past_courier_id=self.courier_id, assign_type=FOOT, assign_time=datetime(2021, 3, 29, 12, 30)
+        )
+        Order.objects.create(order_id=4, weight=1.01, region=17, delivery_hours=["09:00-18:00"], batch=self.batch2,
+                             complete_time = datetime(2021, 3, 29, 13, 00))
+
+    def test_basic(self):
+        expected_response = {
+            "courier_id": self.courier_id,
+            "courier_type": BIKE,
+            "regions": [15, 16, 17],
+            "working_hours": ["09:00-18:00"],
+            "rating": 1.67,
+            "earnings": 500 * 2 + 500 * 5
+        }
+        response = self.client.get(self.path)
+        self.assertEqual(response.status_code, 200)
+        self.assertDictEqual(response.data, expected_response)
+
+    def test_null_rating(self):
+        Courier.objects.create(
+            courier_id=5, courier_type=BIKE, regions=[15, 16, 17], working_hours=["09:00-18:00"],
+        )
+        Batch.objects.create(current_courier_id=5, assign_type=FOOT, assign_time=datetime(2021, 3, 29, 9, 30))
+        Order.objects.create(order_id=6, weight=1.01, region=17, delivery_hours=["09:00-18:00"], batch=self.batch,
+                             complete_time = datetime(2021, 3, 29, 13, 00))
+        expected_response = {
+            "courier_id": 5,
+            "courier_type": BIKE,
+            "regions": [15, 16, 17],
+            "working_hours": ["09:00-18:00"],
+            "earnings": 0
+        }
+        path = reverse('courier', args=(5,))
+
+        response = self.client.get(path)
+        self.assertEqual(response.status_code, 200)
+        self.assertDictEqual(response.data, expected_response)

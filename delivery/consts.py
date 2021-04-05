@@ -11,3 +11,8 @@ COURIER_CAPACITIES = {
     BIKE: 15,
     CAR: 50
 }
+COURIER_PAYMENT_RATES = {
+    FOOT: 2,
+    BIKE: 5,
+    CAR: 9
+}

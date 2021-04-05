@@ -5,7 +5,7 @@ from rest_framework.status import HTTP_200_OK
 
 from delivery.models import Courier, Order
 from delivery.serializers import CourierSerializer, CourierShortSerializer, OrderSerializer, AssignSerializer, \
-    CompleteSerializer
+    CompleteSerializer, CourierDetailSerializer
 from rest_framework import generics
 
 
@@ -29,13 +29,17 @@ class CourierCreateView(generics.CreateAPIView):
         return Response({'couriers': serializer.data}, status=status.HTTP_201_CREATED)
 
 
-class CourierUpdateView(generics.RetrieveUpdateAPIView):
+class CourierRetrieveUpdateView(generics.RetrieveUpdateAPIView):
     """
     API endpoint to update some parameters of a courier
     """
     queryset = Courier.objects.order_by('courier_id')
-    serializer_class = CourierSerializer
     lookup_field = 'courier_id'
+
+    def get_serializer_class(self, *args, **kwargs):
+        if self.request.method == 'GET':
+            return CourierDetailSerializer
+        return CourierSerializer
 
 
 class OrderCreateView(generics.CreateAPIView):

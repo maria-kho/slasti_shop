@@ -1,5 +1,6 @@
 import re
-from collections import OrderedDict, Mapping
+from collections import OrderedDict, Mapping, defaultdict
+from statistics import mean
 
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.utils import timezone
@@ -8,7 +9,8 @@ from rest_framework.fields import get_error_detail, SkipField, set_value
 from rest_framework.settings import api_settings
 from rest_framework.validators import UniqueValidator
 
-from .models import Courier, Order
+from .consts import COURIER_PAYMENT_RATES
+from .models import Courier, Order, Batch
 from rest_framework import serializers
 
 
@@ -85,6 +87,46 @@ class DeserializerMixin:
         return ret
 
 
+class CourierDetailSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Courier
+        fields = ['courier_id', 'courier_type', 'regions', 'working_hours', 'rating', 'earnings']
+
+    rating = serializers.SerializerMethodField()
+    earnings = serializers.SerializerMethodField()
+
+    def to_representation(self, instance):
+        ret = super().to_representation(instance)
+        if ret['rating'] is None:
+            del ret['rating']
+        return ret
+
+    @staticmethod
+    def get_rating(obj):
+        batches = obj.past_batches.all()
+        if not batches:
+            return None
+
+        delivery_times = defaultdict(list)
+        for batch in batches:
+            start_time = batch.assign_time
+            for order in batch.orders.all():
+                delivery_time = (order.complete_time - start_time).total_seconds()
+                delivery_times[order.region].append(delivery_time)
+                start_time = order.complete_time
+        avg_times = [mean(region_times) for region_times in delivery_times.values()]
+        t = min(avg_times)
+
+        return round((60 * 60 - min(t, 60 * 60)) / (60 * 60) * 5, 2)
+
+    @staticmethod
+    def get_earnings(obj):
+        ret = 0
+        for batch in obj.past_batches.all():
+            ret += COURIER_PAYMENT_RATES[batch.assign_type] * 500
+        return ret
+
+
 class CourierSerializer(DeserializerMixin, serializers.ModelSerializer):
     regions = serializers.ListField(child=serializers.IntegerField(min_value=1))
     working_hours = serializers.ListField(child=TimeRangeField())
@@ -97,35 +139,47 @@ class CourierSerializer(DeserializerMixin, serializers.ModelSerializer):
 
     def update(self, instance, validated_data):
         super().update(instance, validated_data)
+        if not hasattr(instance, 'current_batch'):
+            return instance
+
+        batch = instance.current_batch
 
         # drop orders with non-matching regions
         orders_to_drop = Order.objects.filter(
-            courier_id=instance.courier_id, complete_time__isnull=True
+            batch=batch, complete_time__isnull=True
         ).exclude(region__in=instance.regions)
-        orders_to_drop.update(courier=None)
+        orders_to_drop.update(batch=None)
 
         # drop orders with non-matching schedule
         orders = Order.objects.filter(
-            courier_id=instance.courier_id, complete_time__isnull=True
+            batch=batch, complete_time__isnull=True
         ).order_by('-weight')
         for order in orders:
             if not has_intersection(order.delivery_hours, instance.working_hours):
-                order.courier = None
+                order.batch = None
                 order.save()
 
+        # cancel the batch if there is nothing left
+        if not batch.orders.all():
+            batch.current_courier = None
+            batch.save()
+
         # is the weight still ok?
-        orders.update()
-        total_weight = instance.total_weight
         capacity = instance.capacity
-        if capacity > total_weight:
+        if capacity >= instance.total_weight:
             return instance
 
         # drop orders that are too heavy
         for order in orders:
-            order.courier = None
+            order.batch = None
             order.save()
             if capacity >= instance.total_weight:
                 break
+
+        # cancel the batch if there is nothing left
+        if not batch.orders.all():
+            batch.current_courier = None
+            batch.save()
 
         return instance
 
@@ -176,43 +230,49 @@ class AssignSerializer(DeserializerMixin, serializers.ModelSerializer):
 
     @staticmethod
     def get_orders(obj):
-        return [{'id': order.order_id} for order in obj.orders.all() if order.complete_time is None]
+        if hasattr(obj, 'current_batch'):
+            return [{'id': order.order_id} for order in obj.current_batch.orders.all() if order.complete_time is None]
+        return []
 
     def to_representation(self, instance):
         ret = super().to_representation(instance)
         ret['orders'] = self.get_orders(instance)
-        if instance.assign_time is not None:
-            ret['assign_time'] = instance.assign_time.isoformat()
+        if hasattr(instance, 'current_batch') and instance.current_batch.assign_time is not None:
+            ret['assign_time'] = instance.current_batch.assign_time.isoformat()
         return ret
 
     def save(self, courier, *args, **kwargs):
         self.instance = courier
 
         # don't take new orders once assigned
-        if self.instance.assign_time:
+        if hasattr(self.instance, 'current_batch'):
             return self.instance
 
         orders = Order.objects.filter(
-            courier__isnull=True, complete_time__isnull=True, region__in=self.instance.regions
+            batch__isnull=True, complete_time__isnull=True, region__in=self.instance.regions
         ).order_by('weight')
 
         # take orders
         total_weight = 0
         capacity = self.instance.capacity
+        taken_orders = []
         for order in orders:
             if not has_intersection(order.delivery_hours, courier.working_hours):
                 continue
             if total_weight + order.weight <= capacity:
-                order.courier = self.instance
-                order.save()
+                taken_orders.append(order)
                 total_weight += order.weight
             else:
                 break
         if total_weight == 0:
             return self.instance
 
-        self.instance.assign_time = timezone.now()
-        self.instance.save()
+        batch = Batch.objects.create(
+            current_courier=self.instance, assign_time=timezone.now(), assign_type=self.instance.courier_type
+        )
+        batch.orders.set(taken_orders)
+        batch.save()
+
         return self.instance
 
     class Meta:
@@ -221,18 +281,36 @@ class AssignSerializer(DeserializerMixin, serializers.ModelSerializer):
 
 
 class CompleteSerializer(DeserializerMixin, serializers.ModelSerializer):
-    courier_id = serializers.IntegerField(min_value=1, write_only=True)
+    courier_id = serializers.IntegerField(min_value=1, write_only=True, source='batch__current_courier_id')
     complete_time = serializers.DateTimeField(write_only=True)
 
     def validate_courier_id(self, value):
-        if self.instance.courier is None or self.instance.courier.courier_id != value:
+        batch = self.instance.batch
+        if batch is None or batch.current_courier is None and batch.past_courier is None:
+            raise serializers.ValidationError("Order is not assigned to this courier")
+        if (
+                batch.current_courier and value != batch.current_courier.courier_id or
+                batch.past_courier and value != batch.past_courier.courier_id
+        ):
             raise serializers.ValidationError("Order is not assigned to this courier")
         return value
 
     def update(self, instance, validated_data):
         if instance.complete_time:
             return instance
-        return super().update(instance, validated_data)
+        super().update(instance, validated_data)
+
+        # last order
+        orders = Order.objects.filter(
+            batch__current_courier=instance.batch.current_courier, complete_time__isnull=True
+        ).exists()
+        if not orders:
+            batch = instance.batch
+            batch.past_courier = batch.current_courier
+            batch.current_courier = None
+            batch.save()
+
+        return instance
 
     class Meta:
         model = Order
